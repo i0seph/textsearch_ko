@@ -6,25 +6,25 @@ BEGIN;
 -- Korean text parser
 --
 
-CREATE FUNCTION ts_ja_start(internal, int4)
+CREATE FUNCTION ts_mecabko_start(internal, int4)
     RETURNS internal
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
-CREATE FUNCTION ts_ja_gettoken(internal, internal, internal)
+CREATE FUNCTION ts_mecabko_gettoken(internal, internal, internal)
     RETURNS internal
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
-CREATE FUNCTION ts_ja_end(internal)
+CREATE FUNCTION ts_mecabko_end(internal)
     RETURNS void
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
 CREATE TEXT SEARCH PARSER pg_catalog.korean (
-    START    = ts_ja_start,
-    GETTOKEN = ts_ja_gettoken,
-    END      = ts_ja_end,
+    START    = ts_mecabko_start,
+    GETTOKEN = ts_mecabko_gettoken,
+    END      = ts_mecabko_end,
     HEADLINE = pg_catalog.prsd_headline,
     LEXTYPES = pg_catalog.prsd_lextype
 );
@@ -35,17 +35,17 @@ COMMENT ON TEXT SEARCH PARSER pg_catalog.korean IS
 -- Korean text lexizer
 --
 
-CREATE FUNCTION ts_ja_lexize(internal, internal, internal, internal)
+CREATE FUNCTION ts_mecabko_lexize(internal, internal, internal, internal)
     RETURNS internal
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
-CREATE TEXT SEARCH TEMPLATE pg_catalog.mecab (
-	LEXIZE = ts_ja_lexize
+CREATE TEXT SEARCH TEMPLATE pg_catalog.mecabko (
+	LEXIZE = ts_mecabko_lexize
 );
 
 CREATE TEXT SEARCH DICTIONARY pg_catalog.korean_stem (
-	TEMPLATE = pg_catalog.mecab
+	TEMPLATE = pg_catalog.mecabko
 );
 
 --
@@ -76,62 +76,30 @@ ALTER TEXT SEARCH CONFIGURATION pg_catalog.korean ADD MAPPING
 -- Utility functions
 --
 
-CREATE FUNCTION ja_analyze(
+CREATE FUNCTION mecabko_analyze(
         text,
         OUT word text,
         OUT type text,
-        OUT subtype1 text,
-        OUT subtype2 text,
-        OUT subtype3 text,
+        OUT part1st text,
+        OUT partlast text,
+        OUT pronounce text,
         OUT conjtype text,
         OUT conjugation text,
         OUT basic text,
-        OUT ruby text,
-        OUT pronounce text)
+        OUT detail text,
+        OUT lucene text)
     RETURNS SETOF record
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' IMMUTABLE STRICT;
 
-CREATE FUNCTION ja_normalize(text)
+CREATE FUNCTION korean_normalize(text)
     RETURNS text
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' IMMUTABLE STRICT;
-
-CREATE FUNCTION ja_wakachi(text)
-    RETURNS text
-    AS '$libdir/textsearch_ja'
-    LANGUAGE 'c' IMMUTABLE STRICT;
-
-CREATE FUNCTION web_query(text) RETURNS text AS
-$$
-  SELECT regexp_replace(regexp_replace(regexp_replace($1,
-    E'(^|\\s+)-', E'\\1!', 'g'),
-    E'\\s+OR\\s+', '|', 'g'),
-    E'\\s+', '&', 'g');
-$$
-LANGUAGE sql IMMUTABLE STRICT;
-
-CREATE FUNCTION furigana(text)
-    RETURNS text
-    AS '$libdir/textsearch_ja'
-    LANGUAGE 'c' IMMUTABLE STRICT;
-
-CREATE FUNCTION hiragana(text)
-    RETURNS text
-    AS '$libdir/textsearch_ja'
-    LANGUAGE 'c' IMMUTABLE STRICT;
-
-CREATE FUNCTION katakana(text)
-    RETURNS text
-    AS '$libdir/textsearch_ja'
-    LANGUAGE 'c' IMMUTABLE STRICT;
-
---
 
 CREATE FUNCTION hanja2hangul(text)
     RETURNS text
-    AS '$libdir/textsearch_ja'
+    AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' IMMUTABLE STRICT;
-
 
 COMMIT;

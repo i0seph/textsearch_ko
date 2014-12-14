@@ -1,5 +1,11 @@
 ﻿/*
- * textsearch_ja.c
+ * ts_mecab_ko.c
+ * License : BSD
+ * This file is modified from textsearch_ja.c 
+ * Change Contents
+ *  - code refactoring
+ *  - customizing for mecab-ko-dic data
+ * Copyright (c) 2014, Ioseph Kim
  */
 #include "postgres.h"
 
@@ -12,14 +18,13 @@
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
 
-#include "textsearch_ja.h"
+#include "ts_mecab_ko.h"
 #include <mecab.h>
-#include "pgut/pgut-be.h"
 
 PG_MODULE_MAGIC;
 
 /*
- * 日本語単語を含む可能性のあるデフォルトパーサの単語
+ * 이 파서가 분석 가능한 노드 형태들
  */
 #define WORD_T			2	/* Word, all letters */
 #define NUMWORD			3	/* Word, letters and digits */
@@ -28,68 +33,56 @@ PG_MODULE_MAGIC;
 #define NUMHWORD		15	/* Hyphenated word, letters and digits */
 #define HWORD			17	/* Hyphenated word, all letters */
 
-#define IS_JWORD(t)	( \
+#define IS_MECAB_WORD(t)	( \
 	(t) == WORD_T || (t) == NUMWORD || (t) == NUMPARTHWORD || \
 	(t) == PARTHWORD || (t) == NUMHWORD || (t) == HWORD)
 
-/* 空白 */
-#define SPACE			12	/* Space symbols */
+#define SPACE			12
 
-/* MeCab 辞書の内容 (IPA辞書に依存している可能性がある) */
+/* MeCab 에서 넘겨준 CSV 값들 (mecab-ko, mecab-ko-dic 자료기준) */
 #define NUM_CSV			9
-#define MECAB_BASIC		3	/* 基本形 */
-#define MECAB_RUBY		7	/* ルビ */
-#define MECAB_SORI		3	/* 한자 */
+#define MECAB_BASIC		3	/* 기본형 */
 #define MECAB_CONJTYPE		4	/* 용언활용 */
+#define MECAB_DETAIL		7	/* 활용정보 */
 
 #define SEPARATOR_CHAR	'\v'
 
 /*
- * ts_ja_parser - 解析中のテキストを保存する.
+ * parser_data - 파싱 작업 중인 자료
  */
-typedef struct ts_ja_parser
+typedef struct parser_data
 {
 	StringInfoData		str;
-	const mecab_node_t *node;		/* japanese parser */
-	Datum				ascprs;		/* ascii word parser */
-	const char		   *ja_pos;
-} ts_ja_parser;
+	const mecab_node_t	*node;		/* mecab-ko 분석기에서 넘겨준 노드 */
+	Datum			ascprs;		/* ascii word parser */
+	const char		*last_node_pos;
+} parser_data;
 
-PG_FUNCTION_INFO_V1(ts_ja_start);
-PG_FUNCTION_INFO_V1(ts_ja_gettoken);
-PG_FUNCTION_INFO_V1(ts_ja_end);
-PG_FUNCTION_INFO_V1(ts_ja_lexize);
-PG_FUNCTION_INFO_V1(ja_analyze);
-PG_FUNCTION_INFO_V1(ja_normalize);
-PG_FUNCTION_INFO_V1(ja_wakachi);
-PG_FUNCTION_INFO_V1(furigana);
-PG_FUNCTION_INFO_V1(hiragana);
-PG_FUNCTION_INFO_V1(katakana);
+PG_FUNCTION_INFO_V1(ts_mecabko_start);
+PG_FUNCTION_INFO_V1(ts_mecabko_gettoken);
+PG_FUNCTION_INFO_V1(ts_mecabko_end);
+PG_FUNCTION_INFO_V1(ts_mecabko_lexize);
+PG_FUNCTION_INFO_V1(mecabko_analyze);
+PG_FUNCTION_INFO_V1(korean_normalize);
 PG_FUNCTION_INFO_V1(hanja2hangul);
 
 extern void PGDLLEXPORT _PG_init(void);
 extern void PGDLLEXPORT _PG_fini(void);
-extern Datum PGDLLEXPORT ts_ja_start(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ts_ja_gettoken(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ts_ja_end(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ts_ja_lexize(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ja_analyze(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ja_normalize(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT ja_wakachi(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT furigana(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT hiragana(PG_FUNCTION_ARGS);
-extern Datum PGDLLEXPORT katakana(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT ts_mecabko_start(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT ts_mecabko_gettoken(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT ts_mecabko_end(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT ts_mecabko_lexize(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT mecabko_analyze(PG_FUNCTION_ARGS);
+extern Datum PGDLLEXPORT korean_normalize(PG_FUNCTION_ARGS);
 extern Datum PGDLLEXPORT hanja2hangul(PG_FUNCTION_ARGS);
 
 static bool	feature(const mecab_node_t *node, int n, const char **t, int *tlen);
 static void	normalize(StringInfo dst, const char *src, size_t srclen, append_t append);
-static char *lexize(const char *str, size_t len);
-static bool	ignore(const mecab_node_t *node);
-static bool	ignore_mecab_ko_part(const char *str, int slen);
-static void appendString(StringInfo dst, const unsigned char *src, int srclen);
+static char	*lexize(const char *str, size_t len);
+static bool	accept_mecab_ko_part(const char *str, int slen);
+static void	appendString(StringInfo dst, const unsigned char *src, int srclen);
 
 /* mecab-ko-dic 에서 사용할 품사들 */
-
 static char *accept_parts_of_speech[13] = {
 	"NNG" ,"NNP" ,"NNB" ,"NNBC" ,"NR" ,"VV" ,"VA" ,"MM" ,"MAG" ,"XSN" ,"XR" ,"SH", ""
 };
@@ -98,7 +91,7 @@ static char *accept_parts_of_speech[13] = {
 static mecab_t	   *_mecab;
 
 /*
- * mecab_assert - 失敗したら終了.
+ * mecab_assert - mecab 오류 처리
  */
 #define mecab_assert(expr) \
 	if (expr); else \
@@ -107,7 +100,7 @@ static mecab_t	   *_mecab;
 			 errmsg("mecab: %s", mecab_strerror(_mecab))))
 
 /*
- * mecab_assert_encoding - 辞書とDBのエンコーディングが異なると終了.
+ * mecab_acquire - 사전 인코딩과 DB 인코딩이 다르면 종료
  */
 
 static int	mecab_dict_encoding = -1;
@@ -135,22 +128,22 @@ mecab_acquire(void)
 }
 
 /*
- * _PG_init - DLL ロード時に呼ばれる. mecab を初期化する.
+ * _PG_init - 동적 모듈 초기화
  */
 void
 _PG_init(void)
 {
 	if (_mecab == NULL)
 	{
-		int			argc = 3;
-		char	   *argv[] = { "mecab", "-O", "wakati" };
+		int			argc = 1;
+		char	   *argv[] = { "mecab" };
 		_mecab = mecab_new(argc, argv);
 		mecab_assert(_mecab);
 	}
 }
 
 /*
- * _PG_init - DLL アンロード時に呼ばれる. mecab を破棄する.
+ * _PG_fini - 뒷 정리
  */
 void
 _PG_fini(void)
@@ -163,20 +156,24 @@ _PG_fini(void)
 }
 
 /*
- * ts_ja_start - パーサを初期化する.
+ * ts_mecabko_start - 파서 시작 함수
+ * mecab_sparse_tonode2 호출
+ * 영어 쪽을 위해 prsd_start 도 같이 호출
  */
 Datum
-ts_ja_start(PG_FUNCTION_ARGS)
+ts_mecabko_start(PG_FUNCTION_ARGS)
 {
 	mecab_t			   *mecab = mecab_acquire();
 	char			   *input = (char *) PG_GETARG_POINTER(0);
 	int					len	= PG_GETARG_INT32(1);
-	ts_ja_parser	   *parser;
+	parser_data	   *parser;
 
-	parser = (ts_ja_parser *) palloc(sizeof(ts_ja_parser));
+	parser = (parser_data *) palloc(sizeof(parser_data));
 	initStringInfo(&parser->str);
 	/*
-	 * XXX: 한국형 일반화
+	 * XXX: 한국어 문자열 일반화
+         * 전각 영숫자는 소문자로
+         * 한자는 한글로 (못하면 그대로)
 	 */
 	normalize(&parser->str, input, len, appendString);
 
@@ -185,28 +182,27 @@ ts_ja_start(PG_FUNCTION_ARGS)
 	len = parser->str.len;
 
 	/*
-	 * XXX: ts_ja_xxx の呼び出しがオーバーラップしてもよいよう
-	 * node をコピーすべきかもしれない.
+	 * 파싱
 	 */
 	parser->node = mecab_sparse_tonode2(mecab, input, len);
 	mecab_assert(parser->node);
 
-	/* 英数字文字列の解析のため、デフォルトパーサも初期化する. */
+	/* 영숫자는 prsd 쪽으로 넘김 */
 	parser->ascprs = DirectFunctionCall2(
 		prsd_start, CStringGetDatum(input), Int32GetDatum(len));
-	parser->ja_pos = NULL;
+	parser->last_node_pos = NULL;
 
     PG_RETURN_POINTER(parser);
 }
 
 static const mecab_node_t *
-ja_gettoken(ts_ja_parser *parser)
+next_token(parser_data *parser)
 {
 	const mecab_node_t *result;
 
 	for (; parser->node != NULL; parser->node = parser->node->next)
 	{
-		/* 文頭, 文末は無視. */
+		/* 파서 자료 중 처음과 끝 무시 */
 		switch (parser->node->stat)
 		{
 		case MECAB_BOS_NODE:
@@ -226,50 +222,58 @@ ja_gettoken(ts_ja_parser *parser)
  * FIXME: グローバル変数 current_node 経由で処理中の node を渡すのは非常に危険
  * なのだが、他に ts_headline に対応する方法が無いので仕方なくこの方法を取っている.
  * この方式だと、ts_debug() が期待通りに動作しない問題がある.
+ * FIXME : 전역 변수 current_node 통해 처리되는 node를 전달하는 것은 매우 위험하지만,
+ * 다른 ts_headline에 대응하는 방법이 없기 때문에 어쩔 수없이 이 방법을 취하고있다.
+ * 이 방식때문에 ts_debug ()이 예상대로 작동하지 않는 문제가있다. (구글번역)
+ * 사전 처리에 문제가 있음 - ioseph
  */
+
 static const mecab_node_t *current_node;
 
 Datum
-ts_ja_gettoken(PG_FUNCTION_ARGS)
+ts_mecabko_gettoken(PG_FUNCTION_ARGS)
 {
-	ts_ja_parser   *parser = (ts_ja_parser *) PG_GETARG_POINTER(0);
-	const char	  **t = (const char **) PG_GETARG_POINTER(1);
-	int			   *tlen  = (int *) PG_GETARG_POINTER(2);
-	int				lextype;
-	const char	   *skip;
+	parser_data	*parser = (parser_data *) PG_GETARG_POINTER(0);
+	const char	**t = (const char **) PG_GETARG_POINTER(1);
+	int		*tlen  = (int *) PG_GETARG_POINTER(2);
+	int		lextype;
+	const char	*skip;
 	const mecab_node_t *node;
+	const char	*conjstr;
+	int		conjlen;
 
 	current_node = NULL;
 
-	if (parser->ja_pos == NULL)
+	if (parser->last_node_pos == NULL)
 	{
 		for (;;)
 		{
+			/* 일단 기본 파서로 노드 형식을 구함 */
 			lextype = DatumGetInt32(DirectFunctionCall3(
 				prsd_nexttoken, parser->ascprs,
 				PointerGetDatum(t), PointerGetDatum(tlen)));
 
 			if (lextype == 0)
 			{
-				/* 解析完了 */
+				/* 파싱 완료 */
 				PG_RETURN_INT32(0);
 			}
 			else if (lextype == SPACE && *tlen > 0 && **t == SEPARATOR_CHAR)
 			{
-				/* ダミーセパレータは無視する. */
+				/* \v 문자인데, space면 무시 */
 				continue;
 			}
-			else if (IS_JWORD(lextype))
+			else if (IS_MECAB_WORD(lextype))
 			{
-				/* 日本語単語の場合は、MeCabでの解析を行う. */
+				/* 파싱 작업 대상이 됨 */
 				skip = *t;
-				parser->ja_pos = *t + *tlen;
+				parser->last_node_pos = *t + *tlen;
 				break;
 			}
 			else
 			{
-				/* ASCII単語の場合は、ASCIIパーサの結果をそのまま返す. */
-				parser->ja_pos = NULL;
+				/* 그밖은 그대로 통과 */
+				parser->last_node_pos = NULL;
 				PG_RETURN_INT32(lextype);
 			}
 		}
@@ -279,21 +283,26 @@ ts_ja_gettoken(PG_FUNCTION_ARGS)
 
 	do
 	{
-		node = ja_gettoken(parser);
+		node = next_token(parser);
 		if (node == NULL)
 			PG_RETURN_INT32(0);
 	} while (node->surface < skip);
 
-	/* 無視する品詞は blank 扱い. */
-	if (ignore(node))
-		lextype = SPACE;
-	else
+	/* 검색에 사용할 품사만 거르고 나머지는 통과 */
+	if ((feature(node, MECAB_CONJTYPE, &conjstr, &conjlen))
+                   && (strncmp(conjstr, "Inflect,", 8) == 0)
+                   && (feature(node, MECAB_DETAIL, &conjstr, &conjlen))){
 		lextype = WORD_T;
+	}
+	else if (accept_mecab_ko_part(node->feature, strchr(node->feature, ',') - node->feature))
+		lextype = WORD_T;
+	else
+		lextype = SPACE;
 
 	*t = node->surface;
 	*tlen = node->length;
-	if (*t + *tlen >= parser->ja_pos)
-		parser->ja_pos = NULL;
+	if (*t + *tlen >= parser->last_node_pos)
+		parser->last_node_pos = NULL;
 
 	current_node = node;
 
@@ -301,12 +310,12 @@ ts_ja_gettoken(PG_FUNCTION_ARGS)
 }
 
 /*
- * ts_ja_end - メモリの解放.
+ * ts_mecabko_end - 파싱 뒷작업
  */
 Datum
-ts_ja_end(PG_FUNCTION_ARGS)
+ts_mecabko_end(PG_FUNCTION_ARGS)
 {
-	ts_ja_parser *parser = (ts_ja_parser *) PG_GETARG_POINTER(0);
+	parser_data *parser = (parser_data *) PG_GETARG_POINTER(0);
 
 	current_node = NULL;
 
@@ -318,8 +327,21 @@ ts_ja_end(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+
+/*
+ * ts_mecabko_lexize - 사전처리
+ * 현재 ts_lexize 에서 의도된 대로 움직이지 않음
+ * to_tsvector 에서만 의도된 대로 됨
+ * 위에서 말한 current_node 전역변수 처리 때문
+ *
+ * 이 함수로 넘어오는 단어는 형태소 분석기가 의미 단위로 분리한 그 단어가 넘어온다.
+ * 예를 들어 '가까워졌음을'이 입력되면, {가깝,어,지,었,음,을} 로 분리하거나,
+ * 약어, 동의어, 자동수정 등 기능을 할 수 있다.
+ * 
+ * 현재는 단지 용언 활용 부분만 처리한다.
+ */
 Datum
-ts_ja_lexize(PG_FUNCTION_ARGS)
+ts_mecabko_lexize(PG_FUNCTION_ARGS)
 {
 
 	const char *t = (char *) PG_GETARG_POINTER(1);
@@ -334,21 +356,21 @@ ts_ja_lexize(PG_FUNCTION_ARGS)
 	if (current_node) {
 		if ((feature(current_node, MECAB_CONJTYPE, &t, &tlen))
 		   && (strncmp(t, "Inflect,", 8) == 0)
-		   && (feature(current_node, MECAB_RUBY, &t, &tlen))){
+		   && (feature(current_node, MECAB_DETAIL, &t, &tlen))){
 			do {
 				pluspos = strchr(t, '+');
 				pluscnt += 1;
 				if(pluspos != NULL) t = pluspos + 1;
 			} while (pluspos != NULL);
-			feature(current_node, MECAB_RUBY, &t, &tlen);
+			feature(current_node, MECAB_DETAIL, &t, &tlen);
 			res = palloc0(sizeof(TSLexeme) * (pluscnt + 1));
 			i = 0;
 			do {
 				pluspos = strchr(t, '+');
 				slashpos = strchr(t, '/');
-				/* ignore_mecab_ko_part 호출해서 제외 품사면 통과 */
+				/* accept_mecab_ko_part 호출해서 제외 품사면 통과 */
 				if(pluspos != NULL) {
-					if(ignore_mecab_ko_part(slashpos + 1, pluspos - slashpos - 1)){
+					if(accept_mecab_ko_part(slashpos + 1, pluspos - slashpos - 1)){
 						res[i].lexeme = lexize(t, slashpos - t);
 						i += 1;
 					}
@@ -356,7 +378,7 @@ ts_ja_lexize(PG_FUNCTION_ARGS)
 				}
 				else {
 					commapos = strchr(t, ',');
-					if(ignore_mecab_ko_part(slashpos + 1, commapos - slashpos - 1)){
+					if(accept_mecab_ko_part(slashpos + 1, commapos - slashpos - 1)){
 						res[i].lexeme = lexize(t, slashpos - t);
 						i += 1;
 					}
@@ -381,22 +403,22 @@ ts_ja_lexize(PG_FUNCTION_ARGS)
 	PointerGetDatum(cstring_to_text_with_len((s), (ln)))
 
 /*
- * ja_analyze - 文字を形態素解析する.
+ * mecabko_analyze - mecab node dump
  */
 Datum
-ja_analyze(PG_FUNCTION_ARGS)
+mecabko_analyze(PG_FUNCTION_ARGS)
 {
-	mecab_t			   *mecab = mecab_acquire();
+	mecab_t		   *mecab = mecab_acquire();
 	FuncCallContext	   *funcctx;
-	List			   *tuples;
-	HeapTuple			tuple;
-	HeapTuple			result;
+	List		   *tuples;
+	HeapTuple	tuple;
+	HeapTuple	result;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		text			   *txt = PG_GETARG_TEXT_PP(0);
+		text		   *txt = PG_GETARG_TEXT_PP(0);
 		const mecab_node_t *node;
-		TupleDesc			tupdesc;
+		TupleDesc	tupdesc;
 
 		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 			elog(ERROR, "return and sql tuple descriptions are incompatible");
@@ -410,11 +432,10 @@ ja_analyze(PG_FUNCTION_ARGS)
 		tuples = NIL;
 		for (; node != NULL; node = node->next)
 		{
-			int				i;
-			Datum			values[NUM_CSV+1];
-			bool			nulls[NUM_CSV+1] = { 0 };
+			int		i;
+			Datum		values[NUM_CSV+1];
+			bool		nulls[NUM_CSV+1] = { 0 };
 			const char	   *csv;
-			int isskip = 0;
 			const char         *conjtype;
 			int                conjlen;
 			const char *commapos;
@@ -435,50 +456,42 @@ ja_analyze(PG_FUNCTION_ARGS)
 
 			/* 단어 처리
                          * conjtype 값이 Inflect 이면, 
-                         * ruby 기준으로 row로 분리 */
+                         * detail 기준으로 row로 분리 */
 
 			csv = node->feature;
-			if (feature(node, MECAB_CONJTYPE, &conjtype, &conjlen)){
-				if (strncmp(conjtype, "Inflect,", 8) == 0){
-					/* 용언 상세 정보로 처리, 없으면 그대로 */
-					if (feature(node, MECAB_RUBY, &conjtype, &conjlen)){
-						commapos = strchr(conjtype, ',');
-						do {
-							pluspos = strchr(conjtype, '+');
-							slashpos = strchr(conjtype , '/');
-							values[0] = make_text(conjtype, slashpos - conjtype);
-							for (i = 1; i <= NUM_CSV; i++)
-							{
-								if(i == 1){
-									if(pluspos == NULL){
-										values[i] = make_text(slashpos + 1, commapos - slashpos - 1);
-									}
-									else {
-										values[i] = make_text(slashpos + 1, pluspos - slashpos - 1);
-									}
-								}
-								else if(i==3){
-									values[i] = make_text("F",1);
-								}
-								else if(i==4){
-									values[i] = make_text(conjtype, slashpos - conjtype);
-								}
-								else {
-									nulls[i] = true;
-								}
-							}
-							ctx = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-							tuple = heap_form_tuple(tupdesc, values, nulls);
-							tuples = lappend(tuples, tuple);
-							MemoryContextSwitchTo(ctx);
-							conjtype = pluspos + 1;
-						} while(pluspos != NULL);
-						isskip = 1;
+			if ((feature(node, MECAB_CONJTYPE, &conjtype, &conjlen))
+			    && (strncmp(conjtype, "Inflect,", 8) == 0)
+			    && (feature(node, MECAB_DETAIL, &conjtype, &conjlen))){
+				/* 용언 상세 정보로 처리, 없으면 그대로 */
+				commapos = strchr(conjtype, ',');
+				do {
+					pluspos = strchr(conjtype, '+');
+					slashpos = strchr(conjtype , '/');
+					values[0] = make_text(conjtype, slashpos - conjtype);
+					for (i = 1; i <= NUM_CSV; i++)
+					{
+						if(i == 1){
+							values[i] = make_text(slashpos + 1,
+							((pluspos == NULL) ? commapos : pluspos) - slashpos - 1);
+						}
+						else if(i==3){
+							values[i] = make_text("F",1);
+						}
+						else if(i==4){
+							values[i] = make_text(conjtype, slashpos - conjtype);
+						}
+						else {
+							nulls[i] = true;
+						}
 					}
-				}
-				continue;
+					ctx = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+					tuple = heap_form_tuple(tupdesc, values, nulls);
+					tuples = lappend(tuples, tuple);
+					MemoryContextSwitchTo(ctx);
+					conjtype = pluspos + 1;
+				} while(pluspos != NULL);
 			}
-			if (isskip == 0){
+			else {
 				values[0] = make_text(node->surface, node->length);
 
 
@@ -541,10 +554,11 @@ ja_analyze(PG_FUNCTION_ARGS)
 }
 
 /*
- * ja_normalize - 文字を正規化する.
+ * korean_normalize - normalize 함수 랩퍼
+ * 
  */
 Datum
-ja_normalize(PG_FUNCTION_ARGS)
+korean_normalize(PG_FUNCTION_ARGS)
 {
 	Datum			r;
 	text		   *txt = PG_GETARG_TEXT_PP(0);
@@ -558,143 +572,6 @@ ja_normalize(PG_FUNCTION_ARGS)
 	pfree(str.data);
 
 	PG_RETURN_DATUM(r);
-}
-
-/*
- * ja_wakachi - スペース区切りで分かち書きする.
- */
-Datum
-ja_wakachi(PG_FUNCTION_ARGS)
-{
-	mecab_t		   *mecab = mecab_acquire();
-	text		   *r;
-	text		   *txt = PG_GETARG_TEXT_PP(0);
-	const char	   *wakati;
-	size_t			rlen;
-
-	wakati = mecab_sparse_tostr2(mecab, VARDATA_ANY(txt), VARSIZE_ANY_EXHDR(txt));
-	mecab_assert(wakati);
-	PG_FREE_IF_COPY(txt, 0);
-
-	/*
-	 * 末尾に改行が付けられるので, 取り除く.
-	 * FIXME: 元テキストが改行で終わっている場合には取り除くべきではない.
-	 */
-	rlen = strlen(wakati);
-	while (rlen > 0 && (wakati[rlen-1] == ' ' || wakati[rlen-1] == '\n'))
-		rlen--;
-
-	r = (text *) palloc(rlen + VARHDRSZ);
-	SET_VARSIZE(r, rlen + VARHDRSZ);
-
-	memcpy(VARDATA(r), wakati, rlen);
-
-	PG_RETURN_TEXT_P(r);
-}
-
-/*
- * furigana - フリガナを得る.
- */
-Datum
-furigana(PG_FUNCTION_ARGS)
-{
-	mecab_t		   *mecab = mecab_acquire();
-	text		   *txt = PG_GETARG_TEXT_PP(0);
-	StringInfoData	str;
-	const mecab_node_t *node;
-
-	node = mecab_sparse_tonode2(mecab,
-			VARDATA_ANY(txt), VARSIZE_ANY_EXHDR(txt));
-	mecab_assert(node);
-
-	initStringInfo(&str);
-
-	for (; node != NULL; node = node->next)
-	{
-		const char	   *ruby;
-		int				rubylen;
-
-		/* 文頭, 文末は無視. */
-		switch (node->stat)
-		{
-		case MECAB_BOS_NODE:
-		case MECAB_EOS_NODE:
-			continue;
-		}
-
-		if (feature(node, MECAB_RUBY, &ruby, &rubylen))
-			appendBinaryStringInfo(&str, ruby, rubylen);
-		else
-			appendBinaryStringInfo(&str, node->surface, node->length);
-	}
-
-	PG_FREE_IF_COPY(txt, 0);
-
-	PG_RETURN_DATUM(CStringGetTextDatum(str.data));
-}
-
-/*
- * カタカナ -> ひらがな
- */
-Datum
-hiragana(PG_FUNCTION_ARGS)
-{
-	text		   *txt = PG_GETARG_TEXT_PP(0);
-	const char	   *src = VARDATA_ANY(txt);
-	size_t			srclen = VARSIZE_ANY_EXHDR(txt);
-	StringInfoData	str;
-
-	initStringInfo(&str);
-
-	switch (GetDatabaseEncoding())
-	{
-	case PG_UTF8:
-		hiragana_utf8(&str, src, srclen);
-		break;
-	case PG_EUC_JP:
-	case PG_EUC_JIS_2004:
-		hiragana_eucjp(&str, src, srclen);
-		break;
-	default: /* not supported */
-		appendBinaryStringInfo(&str, src, srclen);
-		break;
-	}
-
-	PG_FREE_IF_COPY(txt, 0);
-
-	PG_RETURN_DATUM(CStringGetTextDatum(str.data));
-}
-
-/*
- * ひらがな -> カタカナ
- */
-Datum
-katakana(PG_FUNCTION_ARGS)
-{
-	text		   *txt = PG_GETARG_TEXT_PP(0);
-	const char	   *src = VARDATA_ANY(txt);
-	size_t			srclen = VARSIZE_ANY_EXHDR(txt);
-	StringInfoData	str;
-
-	initStringInfo(&str);
-
-	switch (GetDatabaseEncoding())
-	{
-	case PG_UTF8:
-		katakana_utf8(&str, src, srclen);
-		break;
-	case PG_EUC_JP:
-	case PG_EUC_JIS_2004:
-		katakana_eucjp(&str, src, srclen);
-		break;
-	default: /* not supported */
-		appendBinaryStringInfo(&str, src, srclen);
-		break;
-	}
-
-	PG_FREE_IF_COPY(txt, 0);
-
-	PG_RETURN_DATUM(CStringGetTextDatum(str.data));
 }
 
 /*
@@ -716,10 +593,9 @@ hanja2hangul(PG_FUNCTION_ARGS)
 
 	for (; node != NULL; node = node->next)
 	{
-		const char	   *ruby;
-		int				rubylen;
+		const char	*sori;
+		int		sorilen;
 
-		/* 文頭, 文末は無視. */
 		switch (node->stat)
 		{
 		case MECAB_BOS_NODE:
@@ -727,8 +603,8 @@ hanja2hangul(PG_FUNCTION_ARGS)
 			continue;
 		}
 
-		if (feature(node, MECAB_SORI, &ruby, &rubylen))
-			appendBinaryStringInfo(&str, ruby, rubylen);
+		if (feature(node, MECAB_BASIC, &sori, &sorilen))
+			appendBinaryStringInfo(&str, sori, sorilen);
 		else
 			appendBinaryStringInfo(&str, node->surface, node->length);
 	}
@@ -740,7 +616,7 @@ hanja2hangul(PG_FUNCTION_ARGS)
 
 
 /*
- * feature - CSV文字列のn番目の列を返す.
+ * feature - CSV위치에 * 나, 빈값이 아니면, 그 위치와 길이 반환
  */
 static bool
 feature(const mecab_node_t *node, int n, const char **t, int *tlen)
@@ -770,30 +646,26 @@ feature(const mecab_node_t *node, int n, const char **t, int *tlen)
 }
 
 /*
- * normalize - 文字を正規化する.
- *  カタカナ : 半角 -> 全角
- *  英数文字 : 全角 -> 半角
+ * normalize - 문자정리
+ * 영숫자 : 전각 -> 반각
+ * TODO 
  */
 static void
 normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 {
-	switch (GetDatabaseEncoding())
-	{
-	case PG_UTF8:
+	appendBinaryStringInfo(dst, src, srclen);
+/*
+	if (GetDatabaseEncoding() == PG_UTF8) {
 		normalize_utf8(dst, src, srclen, append);
-		break;
-	case PG_EUC_JP:
-	case PG_EUC_JIS_2004:
-		normalize_eucjp(dst, src, srclen, append);
-		break;
-	default: /* not supported */
-		appendBinaryStringInfo(dst, src, srclen);
-		break;
 	}
+	else {
+		appendBinaryStringInfo(dst, src, srclen);
+	}
+*/
 }
 
 /*
- * lexize - 単語を正規化する.
+ * lexize - mecab 처리 결과 버퍼에서 단어 추출
  */
 static char *
 lexize(const char *str, size_t len)
@@ -805,62 +677,13 @@ lexize(const char *str, size_t len)
 		r[len] = '\0';
 
 	return r;
-
-	switch (GetDatabaseEncoding())
-	{
-	case PG_UTF8:
-		r = lexize_utf8(str, len);
-		break;
-	case PG_EUC_JP:
-	case PG_EUC_JIS_2004:
-		r = lexize_eucjp(str, len);
-		break;
-	default: /* not supported */
-		r = palloc(len + 1);
-		memcpy(r, str, len);
-		r[len] = '\0';
-		break;
-	}
-
-	return r;
-}
-
-/*
- * ignore - 無視すべき単語か?
- */
-static bool
-ignore(const mecab_node_t *node)
-{
-	const IgnorableWord *ignore;
-
-	switch (GetDatabaseEncoding())
-	{
-	case PG_UTF8:
-		ignore = IGNORE_UTF8;
-		break;
-	case PG_EUC_JP:
-	case PG_EUC_JIS_2004:
-		ignore = IGNORE_EUCJP;
-		break;
-	default: /* not supported */
-		return false;
-	}
-
-	/* feature は CSV であり、最初の列が品詞を表す. */
-	for (; ignore->len > 0; ignore++)
-	{
-		if (strncmp(node->feature, ignore->word, ignore->len) == 0)
-			return true;
-	}
-
-	return false;
 }
 
 static bool
-ignore_mecab_ko_part(const char* str, int slen){
+accept_mecab_ko_part(const char* str, int slen){
 	bool isfind = false;
 	int i=0;
-	char input_str[5];
+	char input_str[15];
 	strncpy(input_str, str, slen);
 	input_str[slen] = '\0';
 	while(1){
@@ -875,7 +698,7 @@ ignore_mecab_ko_part(const char* str, int slen){
 }
 
 /*
- * 全角文字列と半角文字連結する場合は間にスペースを補う.
+ * 줄바꿈 문자가 있을 경우, 영어와 한국어 처리를 다르게 함
  */
 static void
 appendString(StringInfo dst, const unsigned char *src, int srclen)
@@ -892,12 +715,12 @@ appendString(StringInfo dst, const unsigned char *src, int srclen)
 			bool ishigh = IS_HIGHBIT_SET(*StringInfoTail(dst, 2));
 			if (srclen == 1 && !ishigh)
 			{
-				/* "A[改行]A" ⇒ "A A" */
+				/* "A[줄바꿈]A" ⇒ "A A" */
 				*StringInfoTail(dst, 1) = ' ';
 			}
 			else if (ishigh)
 			{
-				/* "あ[改行]あ" ⇒ "ああ" */
+				/* "아[줄바끔]아" ⇒ "아아" */
 				dst->len--;
 			}
 		}
