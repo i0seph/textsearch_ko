@@ -81,11 +81,14 @@ static void	normalize(StringInfo dst, const char *src, size_t srclen, append_t a
 static char	*lexize(const char *str, size_t len);
 static bool	accept_mecab_ko_part(const char *str, int slen);
 static void	appendString(StringInfo dst, const unsigned char *src, int srclen);
+static bool	ismbascii(const unsigned char *s, char *c);
 
 /* mecab-ko-dic 에서 사용할 품사들 */
 static char *accept_parts_of_speech[13] = {
 	"NNG" ,"NNP" ,"NNB" ,"NNBC" ,"NR" ,"VV" ,"VA" ,"MM" ,"MAG" ,"XSN" ,"XR" ,"SH", ""
 };
+
+static char *ascii_sign = "`~!@#$%^&*()-=\\_+|[]{};':\",.<>/? ";
 
 /* mecab */
 static mecab_t	   *_mecab;
@@ -645,23 +648,62 @@ feature(const mecab_node_t *node, int n, const char **t, int *tlen)
 	return true;
 }
 
+/* 전각 아스키를 반각으로 */
+/* EFBC80 ~ EFBD9E */
+/* EFBC80 + 32 */
+static bool ismbascii(const unsigned char *s, char *c){
+	unsigned long charval ;
+
+	charval = ((256 * 256) * (int)s[0]) + (256 * (int)s[1]) + (int)s[2];
+	if(charval >= 15711360L && charval <= 15711646L){
+		*c = (char) (charval - 15711360L + 32);
+		return true;
+	}
+	else {
+		return false;
+	}
+}
+
 /*
  * normalize - 문자정리
  * 영숫자 : 전각 -> 반각
+ * 영어, 숫자가 부분 포함 된 것을 공백으로 분리
  * TODO 
  */
 static void
 normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 {
-	appendBinaryStringInfo(dst, src, srclen);
-/*
-	if (GetDatabaseEncoding() == PG_UTF8) {
-		normalize_utf8(dst, src, srclen, append);
+	int len, nextcharlen, current_len, next_len;
+	const unsigned char *s = (const unsigned char *)src;
+        const unsigned char *end = s + srclen;
+	char ch;
+	for (; s < end; s += len){
+		ch = s[0];
+		len = uchar_mblen(s);
+		if(len == 1 || ((len == 3) && ismbascii(s, &ch))){
+			appendStringInfoChar(dst, ch);
+			current_len = 1;
+		}
+		else {
+			appendBinaryStringInfo(dst, (const char *)s, len);
+			current_len = 3;
+		}
+
+		if((s + len) < end){
+			nextcharlen = uchar_mblen(s + len);
+			if((nextcharlen == 3) && (!ismbascii(s + len, &ch))) next_len = 3;
+			else next_len = 1;
+			/* 멀티바이트와 싱글바이트 문자가 연결되면 공백을 끼워넣음 */
+			/* 싱글 + 멀티인 경우 싱글이 ascii_sign 경우와,
+                           멀티 + 싱글인 경우 싱글이 ascii_sign 경우는 제외 */
+			if(current_len != next_len){
+				if((current_len == 3 && (strchr(ascii_sign, (s + len)[0]) == 0))
+				  || (current_len == 1 && (strchr(ascii_sign, s[0]) == 0))){
+					appendBinaryStringInfo(dst, " ", 1);
+				}
+			}
+		}
 	}
-	else {
-		appendBinaryStringInfo(dst, src, srclen);
-	}
-*/
 }
 
 /*
@@ -703,6 +745,7 @@ accept_mecab_ko_part(const char* str, int slen){
 static void
 appendString(StringInfo dst, const unsigned char *src, int srclen)
 {
+        /* 1byte 출력할 수 없는 것은 \v로 */
 	if (srclen == 1 && !isprint(src[0]))
 	{
 		if (dst->len == 0 || *StringInfoTail(dst, 1) != SEPARATOR_CHAR)
