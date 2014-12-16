@@ -33,8 +33,14 @@ PG_MODULE_MAGIC;
 #define NUMHWORD		15	/* Hyphenated word, letters and digits */
 #define HWORD			17	/* Hyphenated word, all letters */
 
-#define IS_MECAB_WORD(t)	( \
+/*
+# define IS_MECAB_WORD(t)	( \
 	(t) == WORD_T || (t) == NUMWORD || (t) == NUMPARTHWORD || \
+	(t) == PARTHWORD || (t) == NUMHWORD || (t) == HWORD)
+*/
+
+# define IS_MECAB_WORD(t)	( \
+	(t) == WORD_T || (t) == NUMPARTHWORD || \
 	(t) == PARTHWORD || (t) == NUMHWORD || (t) == HWORD)
 
 #define SPACE			12
