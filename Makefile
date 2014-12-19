@@ -1,6 +1,5 @@
 MODULE_big = ts_mecab_ko
-DATA_built = ts_mecab_ko.sql
-DATA = uninstall_ts_mecab_ko.sql
+DATA = ts_mecab_ko.sql uninstall_ts_mecab_ko.sql
 OBJS = ts_mecab_ko.o
 REGRESS = init convert ts_mecab_ko
 SHLIB_LINK = -lmecab
