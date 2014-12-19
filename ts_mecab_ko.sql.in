@@ -21,14 +21,14 @@ CREATE FUNCTION ts_mecabko_end(internal)
     AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
-CREATE TEXT SEARCH PARSER pg_catalog.korean (
+CREATE TEXT SEARCH PARSER korean (
     START    = ts_mecabko_start,
     GETTOKEN = ts_mecabko_gettoken,
     END      = ts_mecabko_end,
     HEADLINE = pg_catalog.prsd_headline,
     LEXTYPES = pg_catalog.prsd_lextype
 );
-COMMENT ON TEXT SEARCH PARSER pg_catalog.korean IS
+COMMENT ON TEXT SEARCH PARSER korean IS
     'korean word parser';
 
 --
@@ -40,23 +40,23 @@ CREATE FUNCTION ts_mecabko_lexize(internal, internal, internal, internal)
     AS '$libdir/ts_mecab_ko'
     LANGUAGE 'c' STRICT;
 
-CREATE TEXT SEARCH TEMPLATE pg_catalog.mecabko (
+CREATE TEXT SEARCH TEMPLATE mecabko (
 	LEXIZE = ts_mecabko_lexize
 );
 
-CREATE TEXT SEARCH DICTIONARY pg_catalog.korean_stem (
-	TEMPLATE = pg_catalog.mecabko
+CREATE TEXT SEARCH DICTIONARY korean_stem (
+	TEMPLATE = mecabko
 );
 
 --
 -- Korean text configuration
 --
 
-CREATE TEXT SEARCH CONFIGURATION pg_catalog.korean (PARSER = korean);
-COMMENT ON TEXT SEARCH CONFIGURATION pg_catalog.korean IS
+CREATE TEXT SEARCH CONFIGURATION korean (PARSER = korean);
+COMMENT ON TEXT SEARCH CONFIGURATION korean IS
     'configuration for korean language';
 
-ALTER TEXT SEARCH CONFIGURATION pg_catalog.korean ADD MAPPING
+ALTER TEXT SEARCH CONFIGURATION korean ADD MAPPING
     FOR email, url, url_path, host, file, version,
         sfloat, float, int, uint,
         numword, hword_numpart, numhword
@@ -64,11 +64,11 @@ ALTER TEXT SEARCH CONFIGURATION pg_catalog.korean ADD MAPPING
 
 -- Default configuration is Korean-English.
 -- Replace english_stem if you use other language.
-ALTER TEXT SEARCH CONFIGURATION pg_catalog.korean ADD MAPPING
+ALTER TEXT SEARCH CONFIGURATION korean ADD MAPPING
     FOR asciiword, hword_asciipart, asciihword
     WITH english_stem;
 
-ALTER TEXT SEARCH CONFIGURATION pg_catalog.korean ADD MAPPING
+ALTER TEXT SEARCH CONFIGURATION korean ADD MAPPING
     FOR word, hword_part, hword
     WITH korean_stem;
 
