@@ -387,7 +387,7 @@ ts_mecabko_lexize(PG_FUNCTION_ARGS)
 				}
 				else {
 					commapos = strchr(t, ',');
-					if(accept_mecab_ko_part(slashpos + 1, commapos - slashpos - 1)){
+					if(commapos != NULL && accept_mecab_ko_part(slashpos + 1, commapos - slashpos - 1)){
 						res[i].lexeme = lexize(t, slashpos - t);
 						i += 1;
 					}
