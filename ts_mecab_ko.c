@@ -650,8 +650,12 @@ static bool ismbascii(const unsigned char *s, char *c){
 	unsigned long charval ;
 
 	charval = ((256 * 256) * (int)s[0]) + (256 * (int)s[1]) + (int)s[2];
-	if(charval >= 15711360L && charval <= 15711646L){
-		*c = (char) (charval - 15711360L + 32);
+	if(charval >= 15711361L && charval <= 15711423L){
+		*c = (char) (charval - 15711328L);
+		return true;
+	}
+	else if(charval >= 15711616L && charval <= 15711646L){
+		*c = (char) (charval - 15711520L);
 		return true;
 	}
 	else {
