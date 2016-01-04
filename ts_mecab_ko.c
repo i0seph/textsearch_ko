@@ -358,7 +358,6 @@ ts_mecabko_lexize(PG_FUNCTION_ARGS)
 	TSLexeme   *res;
 	int pluscnt = 0;
 	const char *pluspos;
-	const char *commapos;
 	const char *slashpos;
 	int i;
 
@@ -378,20 +377,12 @@ ts_mecabko_lexize(PG_FUNCTION_ARGS)
 				pluspos = strchr(t, '+');
 				slashpos = strchr(t, '/');
 				/* accept_mecab_ko_part 호출해서 제외 품사면 통과 */
-				if(pluspos != NULL) {
-					if(accept_mecab_ko_part(slashpos + 1, pluspos - slashpos - 1)){
-						res[i].lexeme = lexize(t, slashpos - t);
-						i += 1;
-					}
+				if(accept_mecab_ko_part(slashpos + 1, strchr(slashpos + 1, '/') - slashpos - 1)){
+					res[i].lexeme = lexize(t, slashpos - t);
+					i += 1;
+				}
+				if(pluspos != NULL) 
 					t = pluspos + 1;
-				}
-				else {
-					commapos = strchr(t, ',');
-					if(commapos != NULL && accept_mecab_ko_part(slashpos + 1, commapos - slashpos - 1)){
-						res[i].lexeme = lexize(t, slashpos - t);
-						i += 1;
-					}
-				}
 			} while (pluspos != NULL);
 		}
 		else {
@@ -447,7 +438,6 @@ mecabko_analyze(PG_FUNCTION_ARGS)
 			const char	   *csv;
 			const char         *conjtype;
 			int                conjlen;
-			const char *commapos;
 			const char *pluspos;
 			const char *slashpos;
 
@@ -472,7 +462,6 @@ mecabko_analyze(PG_FUNCTION_ARGS)
 			    && (strncmp(conjtype, "Inflect,", 8) == 0)
 			    && (feature(node, MECAB_DETAIL, &conjtype, &conjlen))){
 				/* 용언 상세 정보로 처리, 없으면 그대로 */
-				commapos = strchr(conjtype, ',');
 				do {
 					pluspos = strchr(conjtype, '+');
 					slashpos = strchr(conjtype , '/');
@@ -481,7 +470,7 @@ mecabko_analyze(PG_FUNCTION_ARGS)
 					{
 						if(i == 1){
 							values[i] = make_text(slashpos + 1,
-							((pluspos == NULL) ? commapos : pluspos) - slashpos - 1);
+							strchr(slashpos + 1, '/') - slashpos - 1);
 						}
 						else if(i==3){
 							values[i] = make_text("F",1);
