@@ -87,7 +87,7 @@ static void	normalize(StringInfo dst, const char *src, size_t srclen, append_t a
 static char	*lexize(const char *str, size_t len);
 static bool	accept_mecab_ko_part(const char *str, int slen);
 static void	appendString(StringInfo dst, const unsigned char *src, int srclen);
-static bool	ismbascii(const unsigned char *s, char *c);
+static bool	ismbascii(const unsigned char *s, unsigned char *c, int *cnt);
 
 /* mecab-ko-dic 에서 사용할 품사들 */
 static char *accept_parts_of_speech[13] = {
@@ -643,24 +643,53 @@ feature(const mecab_node_t *node, int n, const char **t, int *tlen)
 	return true;
 }
 
-/* 전각 아스키를 반각으로 */
-/* EFBC80 ~ EFBD9E */
-/* EFBC80 + 32 */
-static bool ismbascii(const unsigned char *s, char *c){
-	unsigned long charval ;
+/* 3byte 문자 가운데, ascii 코드 문자로 바꿀 수 있는 것들은 바꿈 */
+static bool ismbascii(const unsigned char *s, unsigned char *c, int *cnt){
+	pg_wchar ch;
 
-	charval = ((256 * 256) * (int)s[0]) + (256 * (int)s[1]) + (int)s[2];
-	if(charval >= 15711361L && charval <= 15711423L){
-		*c = (char) (charval - 15711328L);
-		return true;
+	ch = utf8_to_unicode(s);
+	/* 공백 */
+	if(ch == 0x3000){
+		elog(NOTICE, "find space");
+		*cnt = 1;
+		ch = 0x20;
+		unicode_to_utf8(ch, c);
 	}
-	else if(charval >= 15711616L && charval <= 15711646L){
-		*c = (char) (charval - 15711520L);
-		return true;
+	/* 전각 아스키 */
+	else if(ch >= 0xFF01 && ch <= 0xff5e){
+		*cnt = 1;
+		ch = ch - (0xff01) + 0x21;
+		unicode_to_utf8(ch, c);
 	}
-	else {
+	else if(ch == 0x24ea || ch == 0x24ff){
+		*cnt = 1;
+		sprintf((char *)c, "0");
+	}
+	/* 원문자 숫자들 1~20 */
+	else if(ch >= 0x2460 && ch <= 0x249b){
+		sprintf((char *)c, "%d", (ch - 0x2460 ) % 20 + 1);
+		*cnt = strlen((const char *)c);
+	}
+	/* 알파벳 번호 */
+	else if(ch >= 0x249c && ch <= 0x24e9) {
+		sprintf((char *)c, "%c ", (char)((ch - 0x249c) % 26 + 0x61));
+		*cnt = strlen((const char *)c);
+	}
+	/* 11 ~ 20 */
+	else if(ch >= 0x24eb && ch <= 0x24f4) {
+		sprintf((char *)c, "%d", ch - 0x24eb + 11 );
+		*cnt = strlen((const char *)c);
+	}
+	/* 1 ~ 10 */
+	else if(ch >= 0x24f5 && ch <= 0x24fe) {
+		sprintf((char *)c, "%d", ch - 0x24eb + 1 );
+		*cnt = strlen((const char *)c);
+	}
+	/* Enclosed CJK Letters and Months 부분은 생략함 */
+	else{
 		return false;
 	}
+	return true;
 }
 
 /*
@@ -675,34 +704,29 @@ normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 	int len, nextcharlen, current_len, next_len;
 	const unsigned char *s = (const unsigned char *)src;
         const unsigned char *end = s + srclen;
-	char ch;
+	unsigned char *newch;
+	newch = (unsigned char *) palloc(4);
 	for (; s < end; s += len){
-		ch = s[0];
+		//ch = s[0];
 		len = uchar_mblen(s);
-		if(len == 1 || ((len == 3) && ismbascii(s, &ch))){
-			appendStringInfoChar(dst, ch);
-			current_len = 1;
+		if(len == 3 && ismbascii(s, newch, &current_len)){
+			appendBinaryStringInfo(dst, (const char *)newch, current_len);
 		}
 		else {
 			appendBinaryStringInfo(dst, (const char *)s, len);
-			current_len = 3;
+			current_len = len;
 		}
 
+		/* 3byte 이상 문자와 미만 문자가 공백 없이 이어지면 공백문자 넣음 */
+		/* 처리 안하면 mecab 쪽에서 분석 못함 */
 		if((s + len) < end){
 			nextcharlen = uchar_mblen(s + len);
-			if((nextcharlen == 3) && (!ismbascii(s + len, &ch))) next_len = 3;
-			else next_len = 1;
-			/* 멀티바이트와 싱글바이트 문자가 연결되면 공백을 끼워넣음 */
-			/* 싱글 + 멀티인 경우 싱글이 ascii_sign 경우와,
-                           멀티 + 싱글인 경우 싱글이 ascii_sign 경우는 제외 */
-			if(current_len != next_len){
-				if((current_len == 3 && (strchr(ascii_sign, (s + len)[0]) == 0))
-				  || (current_len == 1 && (strchr(ascii_sign, s[0]) == 0))){
-					appendBinaryStringInfo(dst, " ", 1);
-				}
-			}
+			if((current_len < 3 && nextcharlen > 2 && (s)[0] != 0x20)
+				|| (current_len > 2 && nextcharlen < 3 && (s+len)[0] != 0x20))
+				appendBinaryStringInfo(dst, " ", 1);
 		}
 	}
+	pfree(newch);
 }
 
 /*
