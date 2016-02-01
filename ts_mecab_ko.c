@@ -724,7 +724,6 @@ normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 			if(nextcharlen > 2) {
 				ismbascii(s + len, newch, &nextcharlen);
 			}
-			elog(NOTICE, "current_len: %d, nextcharlen: %d", current_len, nextcharlen);
 			if((current_len < 3 && nextcharlen > 2 && (s)[0] != 0x20)
 				|| (current_len > 2 && nextcharlen < 3 && (s+len)[0] != 0x20))
 				appendBinaryStringInfo(dst, " ", 1);
