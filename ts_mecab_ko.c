@@ -701,7 +701,7 @@ static bool ismbascii(const unsigned char *s, unsigned char *c, int *cnt){
 static void
 normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 {
-	int len, nextcharlen, current_len, next_len;
+	int len, nextcharlen, current_len;
 	const unsigned char *s = (const unsigned char *)src;
         const unsigned char *end = s + srclen;
 	unsigned char *newch;
@@ -721,6 +721,10 @@ normalize(StringInfo dst, const char *src, size_t srclen, append_t append)
 		/* 처리 안하면 mecab 쪽에서 분석 못함 */
 		if((s + len) < end){
 			nextcharlen = uchar_mblen(s + len);
+			if(nextcharlen > 2) {
+				ismbascii(s + len, newch, &nextcharlen);
+			}
+			elog(NOTICE, "current_len: %d, nextcharlen: %d", current_len, nextcharlen);
 			if((current_len < 3 && nextcharlen > 2 && (s)[0] != 0x20)
 				|| (current_len > 2 && nextcharlen < 3 && (s+len)[0] != 0x20))
 				appendBinaryStringInfo(dst, " ", 1);
