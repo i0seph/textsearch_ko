@@ -2,6 +2,7 @@ textsearch_ko
 =============
 
 PostgreSQL extension module for Korean full text search using mecab
+
 PostgreSQL 데이터베이스 서버에서 사용할 한글 형태소 분석기 기반 전문 검색 모듈 소스입니다. 
 
 # 설치방법
