@@ -11,6 +11,7 @@ PostgreSQL 데이터베이스 서버에서 사용할 한글 형태소 분석기 
 ## 1. mecab-ko 설치
 https://bitbucket.org/eunjeon/mecab-ko
 페이지를 참조
+aarch64 환경에서는 configure 작업할 때, --build=aarch64-unknown-linux-gnu 옵션 추가해야함. (워낙 오래된 라이브러리라서)
 ## 2. mecab-ko-dic 설치
 https://bitbucket.org/eunjeon/mecab-ko-dic
 페이지를 참조
