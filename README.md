@@ -17,8 +17,11 @@ https://bitbucket.org/eunjeon/mecab-ko-dic
 페이지를 참조
 ## 3. textsearch_ko 설치
 데이터베이스 인코딩은 반드시 utf-8이어야함!
-소스 안 build.sh 파일 열어 경로를 적당히 수정해서 실행
-설치관련 OS 소유주 적당히 알아서 바꿔가면서 작업 하면 됨
+```
+export PATH=/opt/mecab-ko/bin:/postgres/15/bin:$PATH
+make USE_PGXS=1 install
+```
+.so 파일의 mecab-ko 라이브러리 rpath 설정하는 방법 모름. 알아서 잘.
 ## 4. 한국어 설정
  psql -f ts_mecab_ko.sql 데이터베이스이름
 ## 5. 테스트
@@ -28,6 +31,8 @@ ioseph@localhost:~/textsearch_ko$ psql
  psql (9.3.5)
  Type "help" for help.
  
+ ioseph=# CREATE EXTENSION textsearch_ko;
+
  ioseph=# -- 기본 언어를 한국어로 설정
           set default_text_search_config = korean;
  SET
