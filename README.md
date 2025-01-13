@@ -22,9 +22,7 @@ export PATH=/opt/mecab-ko/bin:/postgres/15/bin:$PATH
 make USE_PGXS=1 install
 ```
 .so 파일의 mecab-ko 라이브러리 rpath 설정하는 방법 모름. 알아서 잘.
-## 4. 한국어 설정
- psql -f ts_mecab_ko.sql 데이터베이스이름
-## 5. 테스트
+## 4. 테스트
 ```
 ioseph@localhost:~/textsearch_ko$ psql
  Pager usage is off.
