@@ -1,4 +1,5 @@
 # Object files
+*.bc
 *.o
 *.ko
 *.obj

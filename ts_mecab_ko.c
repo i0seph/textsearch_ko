@@ -605,6 +605,7 @@ hanja2hangul(PG_FUNCTION_ARGS)
 			appendBinaryStringInfo(&str, sori, sorilen);
 		else
 			appendBinaryStringInfo(&str, node->surface, node->length);
+		if(node->next != NULL) appendBinaryStringInfo(&str, " ", 1);
 	}
 
 	PG_FREE_IF_COPY(txt, 0);
@@ -650,7 +651,6 @@ static bool ismbascii(const unsigned char *s, unsigned char *c, int *cnt){
 	ch = utf8_to_unicode(s);
 	/* 공백 */
 	if(ch == 0x3000){
-		elog(NOTICE, "find space");
 		*cnt = 1;
 		ch = 0x20;
 		unicode_to_utf8(ch, c);
