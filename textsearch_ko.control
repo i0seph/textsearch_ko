@@ -1,0 +1,5 @@
+# textsearch_ko extension
+comment = 'textsearch for korean'
+default_version = '1.0'
+module_pathname = '$libdir/ts_mecab_ko'
+relocatable = true
